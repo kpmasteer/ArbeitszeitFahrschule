@@ -23,6 +23,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { SyncPage } from './pages/SyncPage'
 import { todayIso } from './lib/date'
 import { suggestTimeRange } from './lib/timeSuggestions'
+import { activateWaitingUpdate } from './lib/pwaUpdate'
 import { parseLegacyWorkTimeCsv, workBlockImportKey } from './services/csvImport'
 import { APP_VERSION } from './app/defaults'
 import {
@@ -299,10 +300,18 @@ export default function App() {
   const checkForUpdate = async () => {
     try {
       const registration = await navigator.serviceWorker?.getRegistration()
-      await registration?.update()
-      showToast(`Auf Updates geprüft. Du verwendest FahrschulKalender v${APP_VERSION}.`, 'info')
-    } catch {
-      showToast('Die Updateprüfung ist offline nicht möglich.', 'warning')
+      if (!registration) {
+        showToast('In dieser Ansicht ist kein PWA-Update verfügbar.', 'info')
+        return
+      }
+      await registration.update()
+      if (registration.waiting) {
+        if (window.confirm('Eine neue Version ist bereit. Jetzt laden? Ungespeicherte Eingaben gehen dabei verloren; gespeicherte Arbeitszeiten bleiben erhalten.')) await activateWaitingUpdate(registration)
+      } else {
+        showToast(registration.installing ? 'Das Update wird heruntergeladen. Bitte anschließend „Aktualisieren“ wählen.' : `Updateprüfung abgeschlossen. Aktuell geöffnet: v${APP_VERSION}.`, 'info')
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Die Updateprüfung ist offline nicht möglich.', 'warning')
     }
   }
 

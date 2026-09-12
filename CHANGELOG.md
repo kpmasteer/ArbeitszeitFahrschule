@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 – 12. September 2026
+
+- Android-PWA: Sicherungsdialog mit Datei-Teilen, Textdatei-Alternative und Download; keine unbestätigte Erfolgsmeldung mehr.
+- Heruntergeladene PWA-Updates explizit aktivieren und nach Wechsel neu laden; ausbleibende Aktivierung melden.
+- CSV-Import eigener Exporte, Lohnmonatszuordnung sowie Kalender- und Formularergonomie verbessert.
+
 ## 0.1.1 – 21. Juli 2026
 
 - App-Name in **FahrschulKalender** geändert und neue PWA-, Android- und iOS-Icons eingebunden.

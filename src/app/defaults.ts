@@ -1,6 +1,6 @@
 import type { AppSettings, AppWorkBlock, WorkCategory } from './app-types'
 
-export const APP_VERSION = '0.1.1'
+export const APP_VERSION = '0.1.2'
 
 export const DEFAULT_CATEGORIES: readonly WorkCategory[] = [
   { id: 'practice', name: 'Praktische Ausbildung', color: '#b4232d', icon: 'steering-wheel', active: true, sortOrder: 0, rate: 30 },
