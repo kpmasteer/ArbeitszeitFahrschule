@@ -9,11 +9,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['favicon.svg', 'app-icon.svg'],
+      includeAssets: ['favicon-16.png', 'favicon-32.png', 'apple-touch-icon.png'],
       manifest: {
         id: '/',
-        name: 'Fahrschulzeit',
-        short_name: 'Fahrschulzeit',
+        name: 'FahrschulKalender',
+        short_name: 'FahrschulKalender',
         description: 'Arbeitszeit, Ausbildungsstunden und Verdienst für den Fahrschul-Nebenjob.',
         lang: 'de-DE',
         start_url: '/',

@@ -1,7 +1,7 @@
 {
-  "name": "fahrschulzeit",
+  "name": "fahrschulkalender",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,6 +15,7 @@
     "cap:ios": "npm run cap:sync && cap open ios"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.1",
     "@capacitor/core": "8.4.2",
     "@ebarooni/capacitor-calendar": "8.2.0",
     "lucide-react": "^0.554.0",
