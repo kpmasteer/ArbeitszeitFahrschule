@@ -22,12 +22,14 @@ import {
 import { exportRepositoryBackup, importRepositoryBackup } from '../services/backup'
 import { APP_STORE_NAMES, type SettingRecord } from '../services/models'
 import { createLocalRepository, type RepositoryMode } from '../services/repository'
-import type { AppSettings, AppWorkBlock, WorkBlockDraft, WorkCategory } from './app-types'
+import type { AppSettings, AppWorkBlock, PaymentDraft, PaymentRecord, WorkBlockDraft, WorkCategory } from './app-types'
 import { APP_VERSION, createSampleBlocks, DEFAULT_CATEGORIES, DEFAULT_SETTINGS } from './defaults'
 import { currentMonthKey } from '../lib/date'
+import { migratePaymentRecords } from './payment-migration'
 
-const repository = createLocalRepository()
+const repository = createLocalRepository({ version: 2 })
 const SETTINGS_ID = 'app-settings'
+const PAYMENTS_ID = 'payment-records'
 
 interface AppStoreContextValue {
   readonly ready: boolean
@@ -38,10 +40,14 @@ interface AppStoreContextValue {
   readonly categories: readonly WorkCategory[]
   readonly settings: AppSettings
   readonly syncRecords: readonly CalendarSyncRecord[]
+  readonly payments: readonly PaymentRecord[]
   readonly pendingSyncCount: number
   syncStatusFor(block: AppWorkBlock): CalendarSyncStatus
   saveBlock(draft: WorkBlockDraft): Promise<AppWorkBlock>
+  importBlocks(drafts: readonly WorkBlockDraft[]): Promise<readonly AppWorkBlock[]>
   deleteBlock(id: string): Promise<void>
+  savePayment(draft: PaymentDraft): Promise<PaymentRecord>
+  deletePayment(id: string): Promise<void>
   updateSettings(next: AppSettings): Promise<void>
   updateCategory(category: WorkCategory): Promise<void>
   addCategory(name: string): Promise<WorkCategory>
@@ -129,6 +135,7 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
   const [categories, setCategories] = useState<readonly WorkCategory[]>(DEFAULT_CATEGORIES)
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
   const [syncRecords, setSyncRecords] = useState<readonly CalendarSyncRecord[]>([])
+  const [payments, setPayments] = useState<readonly PaymentRecord[]>([])
 
   const load = useCallback(async () => {
     try {
@@ -138,14 +145,16 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
         setStorageError('Dauerhafte Gerätespeicherung ist gerade nicht verfügbar. Änderungen gelten nur bis zum Schließen der App.')
       }
 
-      let [storedBlocks, storedCategories, storedSettings, storedSync] = await Promise.all([
+      let [storedBlocks, storedCategories, storedSettings, storedSync, storedPayments] = await Promise.all([
         repository.getAll<AppWorkBlock>(APP_STORE_NAMES.workBlocks),
         repository.getAll<WorkCategory>(APP_STORE_NAMES.categories),
         repository.getAll<SettingRecord>(APP_STORE_NAMES.settings),
         repository.getAll<CalendarSyncRecord>(APP_STORE_NAMES.calendarSync),
+        repository.getAll<PaymentRecord>(APP_STORE_NAMES.payments),
       ])
 
       const savedSettings = storedSettings.find((record) => record.id === SETTINGS_ID)
+      const savedPayments = storedSettings.find((record) => record.id === PAYMENTS_ID)
       const nextSettings = mergeSettings(savedSettings?.value)
 
       if (!savedSettings) {
@@ -164,10 +173,22 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
         await repository.putMany(APP_STORE_NAMES.categories, storedCategories)
       }
 
+      if (storedPayments.length === 0 && savedPayments) {
+        storedPayments = migratePaymentRecords(savedPayments.value)
+        await repository.putMany(APP_STORE_NAMES.payments, storedPayments)
+      } else {
+        const migratedPayments = migratePaymentRecords(storedPayments)
+        if (JSON.stringify(migratedPayments) !== JSON.stringify(storedPayments)) {
+          await repository.putMany(APP_STORE_NAMES.payments, migratedPayments)
+        }
+        storedPayments = migratedPayments
+      }
+
       setAllBlocks(storedBlocks)
       setCategories(storedCategories.sort((left, right) => left.sortOrder - right.sortOrder))
       setSettings(nextSettings)
       setSyncRecords(storedSync)
+      setPayments(storedPayments)
     } catch (error) {
       setStorageError(error instanceof Error ? error.message : 'Lokale Daten konnten nicht geladen werden.')
     } finally {
@@ -242,6 +263,33 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
     return block
   }, [allBlocks, settings, syncRecords])
 
+  const importBlocks = useCallback(async (drafts: readonly WorkBlockDraft[]): Promise<readonly AppWorkBlock[]> => {
+    const now = new Date().toISOString()
+    const imported = drafts.map((draft, index): AppWorkBlock => {
+      const block: AppWorkBlock = {
+        ...draft,
+        id: createId(`import-${index + 1}`),
+        createdAt: now,
+        updatedAt: now,
+        sample: false,
+      }
+      calculateWorkBlock(block, settings.pay)
+      return block
+    })
+    const records = imported.map((block) => createPendingCalendarSyncRecord(
+      block.id,
+      fingerprint(block, settings),
+      { provider: 'ics', eventUid: `${block.id}@fahrschulzeit.local` },
+    ))
+    await Promise.all([
+      repository.putMany(APP_STORE_NAMES.workBlocks, imported),
+      repository.putMany(APP_STORE_NAMES.calendarSync, records),
+    ])
+    setAllBlocks((current) => [...current, ...imported])
+    setSyncRecords((current) => [...current, ...records])
+    return imported
+  }, [settings])
+
   const deleteBlock = useCallback(async (id: string): Promise<void> => {
     await Promise.all([
       repository.remove(APP_STORE_NAMES.workBlocks, id),
@@ -249,6 +297,36 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
     ])
     setAllBlocks((current) => current.filter((block) => block.id !== id))
     setSyncRecords((current) => current.filter((record) => record.workBlockId !== id))
+  }, [])
+
+  const savePayment = useCallback(async (draft: PaymentDraft): Promise<PaymentRecord> => {
+    if (!Number.isInteger(draft.amountCents) || draft.amountCents <= 0) {
+      throw new RangeError('Der Zahlungseingang muss größer als 0 € sein.')
+    }
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(draft.salaryMonth)) {
+      throw new RangeError('Bitte einen gültigen Lohnmonat auswählen.')
+    }
+    const existing = draft.id ? payments.find((payment) => payment.id === draft.id) : undefined
+    const now = new Date().toISOString()
+    const payment: PaymentRecord = {
+      id: existing?.id ?? createId('payment'),
+      paymentDate: draft.paymentDate,
+      salaryMonth: draft.salaryMonth,
+      amountCents: draft.amountCents,
+      note: draft.note?.trim() || undefined,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    }
+    await repository.put(APP_STORE_NAMES.payments, payment)
+    setPayments((current) => existing
+      ? current.map((entry) => entry.id === payment.id ? payment : entry)
+      : [...current, payment])
+    return payment
+  }, [payments])
+
+  const deletePayment = useCallback(async (id: string): Promise<void> => {
+    await repository.remove(APP_STORE_NAMES.payments, id)
+    setPayments((current) => current.filter((payment) => payment.id !== id))
   }, [])
 
   const updateSettings = useCallback(async (next: AppSettings): Promise<void> => {
@@ -348,11 +426,13 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
       [APP_STORE_NAMES.categories]: [...DEFAULT_CATEGORIES],
       [APP_STORE_NAMES.settings]: [{ id: SETTINGS_ID, value: cleanSettings } as SettingRecord],
       [APP_STORE_NAMES.calendarSync]: [],
+      [APP_STORE_NAMES.payments]: [],
     })
     setAllBlocks([])
     setCategories(DEFAULT_CATEGORIES)
     setSettings(cleanSettings)
     setSyncRecords([])
+    setPayments([])
   }, [])
 
   const value = useMemo<AppStoreContextValue>(() => ({
@@ -364,10 +444,14 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
     categories,
     settings,
     syncRecords,
+    payments,
     pendingSyncCount,
     syncStatusFor,
     saveBlock,
+    importBlocks,
     deleteBlock,
+    savePayment,
+    deletePayment,
     updateSettings,
     updateCategory,
     addCategory,
@@ -385,10 +469,14 @@ export function AppStoreProvider({ children }: { readonly children: ReactNode })
     categories,
     settings,
     syncRecords,
+    payments,
     pendingSyncCount,
     syncStatusFor,
     saveBlock,
+    importBlocks,
     deleteBlock,
+    savePayment,
+    deletePayment,
     updateSettings,
     updateCategory,
     addCategory,

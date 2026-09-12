@@ -1,6 +1,6 @@
 import type { AppSettings, AppWorkBlock, WorkCategory } from './app-types'
 
-export const APP_VERSION = '0.1.0'
+export const APP_VERSION = '0.1.1'
 
 export const DEFAULT_CATEGORIES: readonly WorkCategory[] = [
   { id: 'practice', name: 'Praktische Ausbildung', color: '#b4232d', icon: 'steering-wheel', active: true, sortOrder: 0, rate: 30 },
@@ -35,7 +35,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   compactCalendar: true,
   calendar: {
     titleTemplate: 'Fahrschule – {tätigkeit}',
-    descriptionTemplate: '{arbeitszeit} · {ausbstunden}',
+    descriptionTemplate: '{dauer} · {ausbstunden}',
     color: 'red',
     automatic: false,
     updateAutomatically: false,
@@ -43,6 +43,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     includeEarnings: true,
   },
   showSampleData: true,
+  payControlStartingBalanceCents: 0,
 }
 
 export function createSampleBlocks(month: string): readonly AppWorkBlock[] {

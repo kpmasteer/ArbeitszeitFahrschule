@@ -1,7 +1,10 @@
 import { CircleAlert } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppShell, type AppPage } from './components/AppShell'
 import { Logo } from './components/Logo'
+import { BackupExportDialog } from './components/BackupExportDialog'
 import { PwaUpdatePrompt } from './components/PwaUpdatePrompt'
 import { Toast, type ToastTone } from './components/Toast'
 import { useAppStore } from './app/AppStore'
@@ -15,10 +18,13 @@ import { CalendarPage } from './pages/CalendarPage'
 import { CapturePage } from './pages/CapturePage'
 import { HomePage } from './pages/HomePage'
 import { InsightsPage } from './pages/InsightsPage'
+import { PaymentsPage } from './pages/PaymentsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SyncPage } from './pages/SyncPage'
 import { todayIso } from './lib/date'
-import { downloadTextFile } from './services'
+import { suggestTimeRange } from './lib/timeSuggestions'
+import { parseLegacyWorkTimeCsv, workBlockImportKey } from './services/csvImport'
+import { APP_VERSION } from './app/defaults'
 import {
   checkCalendarPermission,
   getCalendarCapability,
@@ -35,11 +41,15 @@ interface ToastState {
 export default function App() {
   const store = useAppStore()
   const [page, setPage] = useState<AppPage>('home')
+  const [preparedBackup, setPreparedBackup] = useState<{ content: string; filename: string }>()
+  const preparingBackup = useRef(false)
   const [editingBlockId, setEditingBlockId] = useState<string>()
   const [templateBlockId, setTemplateBlockId] = useState<string>()
   const [captureDate, setCaptureDate] = useState<string>()
   const [calendarDate, setCalendarDate] = useState<string>()
   const [toast, setToast] = useState<ToastState>()
+  const pageRef = useRef<AppPage>('home')
+  const historyRef = useRef<AppPage[]>([])
 
   const editingBlock = useMemo(
     () => store.allBlocks.find((block) => block.id === editingBlockId),
@@ -60,7 +70,13 @@ export default function App() {
     return () => window.clearTimeout(timeout)
   }, [toast])
 
-  const navigate = (next: AppPage) => {
+  const navigate = useCallback((next: AppPage, mode: 'push' | 'replace' = 'push') => {
+    if (mode === 'replace') {
+      while (historyRef.current.at(-1) === next) historyRef.current.pop()
+    }
+    if (next === pageRef.current) return
+    if (mode === 'push') historyRef.current.push(pageRef.current)
+    pageRef.current = next
     setPage(next)
     if (next !== 'capture') {
       setEditingBlockId(undefined)
@@ -68,27 +84,47 @@ export default function App() {
       setCaptureDate(undefined)
     }
     window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
+  }, [])
 
-  const startNew = (date?: string) => {
+  const goBack = useCallback(async () => {
+    if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
+      const closeDialog = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+      document.dispatchEvent(closeDialog)
+      if (closeDialog.defaultPrevented) return
+    }
+    const previous = historyRef.current.pop()
+    if (!previous) {
+      if (Capacitor.isNativePlatform()) await CapacitorApp.exitApp()
+      return
+    }
+    navigate(previous, 'replace')
+  }, [navigate])
+
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return
+    const listener = CapacitorApp.addListener('backButton', () => { void goBack() })
+    return () => { void listener.then((handle) => handle.remove()) }
+  }, [goBack])
+
+  const startNew = useCallback((date?: string) => {
     setEditingBlockId(undefined)
     setTemplateBlockId(undefined)
     setCaptureDate(date ?? todayIso())
-    setPage('capture')
-  }
+    navigate('capture')
+  }, [navigate])
 
   const editBlock = (block: AppWorkBlock) => {
     setEditingBlockId(block.id)
     setTemplateBlockId(undefined)
     setCaptureDate(block.date)
-    setPage('capture')
+    navigate('capture')
   }
 
   const repeatBlock = (block: AppWorkBlock) => {
     setEditingBlockId(undefined)
     setTemplateBlockId(block.id)
     setCaptureDate(todayIso())
-    setPage('capture')
+    navigate('capture')
   }
 
   const transfer = useCallback(async (blocks: readonly AppWorkBlock[], scope: string) => {
@@ -136,7 +172,7 @@ export default function App() {
 
     if (!addAnother) {
       setCalendarDate(saved.date)
-      navigate('calendar')
+      navigate('calendar', 'replace')
     }
   }
 
@@ -160,12 +196,51 @@ export default function App() {
   }
 
   const exportBackup = async () => {
+    if (preparingBackup.current) return
+    preparingBackup.current = true
     try {
       const content = await store.exportBackup()
-      downloadTextFile(content, `fahrschulzeit-backup-${todayIso()}.json`, 'application/json;charset=utf-8')
-      showToast('Datensicherung exportiert.')
+      setPreparedBackup({ content, filename: `fahrschulkalender-backup-${todayIso()}.json` })
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Datensicherung fehlgeschlagen.', 'warning')
+    } finally {
+      preparingBackup.current = false
+    }
+  }
+
+  const importCsv = async (files: readonly File[]) => {
+    try {
+      const parsedFiles = await Promise.all(files.map(async (file) => ({
+        file,
+        result: parseLegacyWorkTimeCsv(await file.text(), store.settings.defaultCategoryId),
+      })))
+      const existing = new Set(store.allBlocks.filter((block) => !block.sample).map(workBlockImportKey))
+      const drafts: WorkBlockDraft[] = []
+      let duplicates = 0
+      parsedFiles.forEach(({ result }) => result.drafts.forEach((draft) => {
+        const key = workBlockImportKey(draft)
+        if (existing.has(key)) duplicates += 1
+        else { existing.add(key); drafts.push(draft) }
+      }))
+      if (drafts.length === 0) {
+        showToast('Alle Arbeitszeiten aus den gewählten CSV-Dateien sind bereits vorhanden.', 'info')
+        return
+      }
+      const skippedRows = parsedFiles.reduce((sum, item) => sum + item.result.skippedRows, 0)
+      const warnings = parsedFiles.flatMap((item) => item.result.warnings)
+      const details = [
+        `${drafts.length} Arbeitsblöcke werden importiert.`,
+        duplicates ? `${duplicates} Dubletten werden übersprungen.` : '',
+        skippedRows ? `${skippedRows} Summen- oder Leerzeilen werden ignoriert.` : '',
+        ...warnings,
+      ].filter(Boolean).join('\n')
+      if (!window.confirm(`${files.length} CSV-${files.length === 1 ? 'Datei' : 'Dateien'} ausgewählt\n\n${details}\n\nFortfahren?`)) return
+      await store.importBlocks(drafts)
+      showToast(`${drafts.length} Arbeitsblöcke importiert${duplicates ? `, ${duplicates} Dubletten übersprungen` : ''}${warnings.length ? `, ${warnings.length} Hinweis(e)` : ''}.`, warnings.length ? 'warning' : 'success')
+      setCalendarDate(drafts[0].date)
+      navigate('calendar')
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'CSV-Datei konnte nicht importiert werden.', 'warning')
     }
   }
 
@@ -225,11 +300,16 @@ export default function App() {
     try {
       const registration = await navigator.serviceWorker?.getRegistration()
       await registration?.update()
-      showToast('Auf Updates geprüft. Du verwendest Fahrschulzeit v0.1.0.', 'info')
+      showToast(`Auf Updates geprüft. Du verwendest FahrschulKalender v${APP_VERSION}.`, 'info')
     } catch {
       showToast('Die Updateprüfung ist offline nicht möglich.', 'warning')
     }
   }
+
+  const getSuggestedTimeRange = useCallback(
+    (date: string) => suggestTimeRange(date, store.allBlocks, [store.settings.defaultStartTime, store.settings.defaultEndTime]),
+    [store.allBlocks, store.settings.defaultEndTime, store.settings.defaultStartTime],
+  )
 
   if (!store.ready) {
     return (
@@ -248,6 +328,7 @@ export default function App() {
             categories={store.categories}
             settings={store.settings}
             initialDate={calendarDate}
+            onSelectedDateChange={setCalendarDate}
             syncStatusFor={store.syncStatusFor}
             onNew={startNew}
             onEdit={editBlock}
@@ -263,6 +344,7 @@ export default function App() {
             initialBlock={editingBlock}
             templateBlock={templateBlock}
             initialDate={captureDate}
+            getSuggestedTimeRange={getSuggestedTimeRange}
             onSave={saveBlock}
             onCancel={() => navigate('calendar')}
             onAddCategory={store.addCategory}
@@ -276,6 +358,18 @@ export default function App() {
             settings={store.settings}
             onExportCsv={(scope, key) => exportCsv(scope, key)}
             onPrintMonth={() => window.print()}
+            onOpenPayments={() => navigate('payments')}
+          />
+        )
+      case 'payments':
+        return (
+          <PaymentsPage
+            blocks={store.blocks}
+            payments={store.payments}
+            settings={store.settings}
+            onSavePayment={store.savePayment}
+            onDeletePayment={(id) => { if (window.confirm('Diesen Zahlungseingang wirklich löschen?')) void store.deletePayment(id) }}
+            onBack={() => navigate('insights', 'replace')}
           />
         )
       case 'sync':
@@ -301,6 +395,7 @@ export default function App() {
             onAddCategory={async (name) => { await store.addCategory(name) }}
             onExportBackup={() => void exportBackup()}
             onImportBackup={(file) => void importBackup(file)}
+            onImportCsv={(files) => void importCsv(files)}
             onExportCsv={() => exportCsv('all')}
             onResetData={() => void resetData()}
             onCalendarDiagnostic={() => void runCalendarDiagnostic()}
@@ -314,11 +409,11 @@ export default function App() {
             categories={store.categories}
             settings={store.settings}
             pendingSyncCount={store.pendingSyncCount}
-            onNavigate={navigate}
+            onNavigate={(next) => next === 'capture' ? startNew(calendarDate ?? todayIso()) : navigate(next)}
             onRepeatLast={repeatBlock}
             onSyncPending={() => void transferWithToast(store.blocks.filter((block) => store.syncStatusFor(block) !== 'synced'), 'offene-eintraege')}
             onNew={startNew}
-            onOpenCalendar={(date) => { setCalendarDate(date); setPage('calendar') }}
+            onOpenCalendar={(date) => { setCalendarDate(date); navigate('calendar') }}
           />
         )
     }
@@ -326,13 +421,17 @@ export default function App() {
 
   return (
     <>
-      <AppShell page={page} onNavigate={navigate} syncCount={store.pendingSyncCount}>
+      <AppShell page={page} onNavigate={(next) => next === 'capture' ? startNew(calendarDate ?? todayIso()) : navigate(next)} syncCount={store.pendingSyncCount}>
         {store.storageError && (
           <div className="notice notice--warning app-notice"><CircleAlert size={18} /><span>{store.storageError}</span></div>
+        )}
+        {store.blocks.some((block) => block.sample) && (
+          <div className="notice app-notice"><CircleAlert size={18} /><span>Beispieldaten sind eingeblendet. Die Lohnkontrolle berücksichtigt ausschließlich deine eigenen Arbeitszeiten.</span><button className="text-button" onClick={() => navigate('settings')}>Einstellungen</button></div>
         )}
         {pageContent}
       </AppShell>
       <PwaUpdatePrompt />
+      {preparedBackup && <BackupExportDialog content={preparedBackup.content} filename={preparedBackup.filename} onClose={() => setPreparedBackup(undefined)} />}
       {toast && <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(undefined)} />}
     </>
   )

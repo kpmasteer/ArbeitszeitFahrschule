@@ -12,12 +12,14 @@ import {
   Trash2,
   UserRound,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { AppSettings, AppWorkBlock, WorkBlockDraft, WorkCategory } from '../app/app-types'
 import { PageHeader } from '../components/PageHeader'
 import { calculateWorkBlock, type WorkBreak } from '../domain'
 import { todayIso } from '../lib/date'
 import { formatDuration, formatMoneyCents, formatTrainingHours, parseDecimalInput } from '../lib/format'
+import type { SuggestedTimeRange } from '../lib/timeSuggestions'
+import { openTimePickerAfterCommit } from '../lib/timePicker'
 
 interface CapturePageProps {
   readonly settings: AppSettings
@@ -25,6 +27,7 @@ interface CapturePageProps {
   readonly initialBlock?: AppWorkBlock
   readonly templateBlock?: AppWorkBlock
   readonly initialDate?: string
+  getSuggestedTimeRange(date: string): SuggestedTimeRange
   onSave(draft: WorkBlockDraft, addAnother: boolean): void | Promise<void>
   onCancel(): void
   onAddCategory(name: string): Promise<WorkCategory>
@@ -47,12 +50,12 @@ interface DraftState {
   calendarText: string
 }
 
-function createDraft(settings: AppSettings, block?: AppWorkBlock, initialDate?: string, edit = false): DraftState {
+function createDraft(settings: AppSettings, block?: AppWorkBlock, initialDate?: string, edit = false, suggested?: SuggestedTimeRange): DraftState {
   return {
     id: edit ? block?.id : undefined,
-    date: block?.date ?? initialDate ?? todayIso(),
-    startTime: block?.startTime ?? settings.defaultStartTime,
-    endTime: block?.endTime ?? settings.defaultEndTime,
+    date: (edit ? block?.date : initialDate ?? block?.date) ?? todayIso(),
+    startTime: block?.startTime ?? suggested?.startTime ?? settings.defaultStartTime,
+    endTime: block?.endTime ?? suggested?.endTime ?? settings.defaultEndTime,
     breaks: block ? block.breaks.map((entry) => ({ ...entry })) : settings.defaultBreakMinutes > 0
       ? [{ id: 'default-break', kind: 'duration', minutes: settings.defaultBreakMinutes }]
       : [],
@@ -76,23 +79,33 @@ export function CapturePage({
   initialBlock,
   templateBlock,
   initialDate,
+  getSuggestedTimeRange,
   onSave,
   onCancel,
   onAddCategory,
 }: CapturePageProps) {
   const sourceBlock = initialBlock ?? templateBlock
-  const [draft, setDraft] = useState(() => createDraft(settings, sourceBlock, initialDate, Boolean(initialBlock)))
+  const initialDraftDate = sourceBlock?.date ?? initialDate ?? todayIso()
+  const [draft, setDraft] = useState(() => createDraft(settings, sourceBlock, initialDate, Boolean(initialBlock), getSuggestedTimeRange(initialDraftDate)))
   const [detailsOpen, setDetailsOpen] = useState(Boolean(initialBlock?.notes || initialBlock?.location || initialBlock?.studentOrAssignment))
   const [newCategoryName, setNewCategoryName] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
+  const endTimeRef = useRef<HTMLInputElement>(null)
+  const cancelScheduledEndPicker = useRef<(() => void) | undefined>(undefined)
 
   useEffect(() => {
-    setDraft(createDraft(settings, initialBlock ?? templateBlock, initialDate, Boolean(initialBlock)))
+    const nextSource = initialBlock ?? templateBlock
+    const nextDate = nextSource?.date ?? initialDate ?? todayIso()
+    setDraft(createDraft(settings, nextSource, initialDate, Boolean(initialBlock), getSuggestedTimeRange(nextDate)))
     setDetailsOpen(Boolean(initialBlock?.notes || initialBlock?.location || initialBlock?.studentOrAssignment))
     setError(undefined)
-  }, [initialBlock, templateBlock, initialDate, settings.defaultCategoryId, settings.defaultEndTime, settings.defaultStartTime, settings.defaultBreakMinutes])
+  }, [initialBlock, templateBlock, initialDate, settings.defaultCategoryId, settings.defaultEndTime, settings.defaultStartTime, settings.defaultBreakMinutes, getSuggestedTimeRange])
+
+  useEffect(() => () => cancelScheduledEndPicker.current?.(), [])
+
+  const suggestion = useMemo(() => getSuggestedTimeRange(draft.date), [draft.date, getSuggestedTimeRange])
 
   const activeCategories = categories.filter((category) => category.active)
   const selectedCategory = categories.find((category) => category.id === draft.categoryId)
@@ -151,7 +164,7 @@ export function CapturePage({
       setSaving(true)
       await onSave(value, addAnother)
       if (addAnother) {
-        setDraft(createDraft(settings, undefined, draft.date))
+        setDraft(createDraft(settings, undefined, draft.date, false, getSuggestedTimeRange(draft.date)))
         setDetailsOpen(false)
       }
     } catch (caught) {
@@ -184,20 +197,36 @@ export function CapturePage({
             <div className="form-grid form-grid--three">
               <label className="field">
                 <span>Datum *</span>
-                <input className="input" type="date" required value={draft.date} onChange={(event) => update('date', event.target.value)} />
+                <input className="input" type="date" required value={draft.date} onChange={(event) => {
+                  const nextDate = event.target.value
+                  const next = nextDate ? getSuggestedTimeRange(nextDate) : undefined
+                  setDraft((current) => {
+                    const previousSuggestion = current.date ? getSuggestedTimeRange(current.date) : undefined
+                    const usesSuggestion = !initialBlock && !templateBlock && previousSuggestion
+                      && current.startTime === previousSuggestion.startTime && current.endTime === previousSuggestion.endTime
+                    return { ...current, date: nextDate, ...(usesSuggestion && next ? { startTime: next.startTime, endTime: next.endTime } : {}) }
+                  })
+                  setError(undefined)
+                }} />
               </label>
               <label className="field time-field">
                 <span>Beginn *</span>
-                <input className="input" type="time" required step={settings.minuteStep * 60} value={draft.startTime} onChange={(event) => update('startTime', event.target.value)} />
+                <input className="input" type="time" required step={settings.minuteStep * 60} value={draft.startTime} onChange={(event) => {
+                  update('startTime', event.target.value)
+                  if (!event.target.value) return
+                  cancelScheduledEndPicker.current?.()
+                  if (endTimeRef.current) cancelScheduledEndPicker.current = openTimePickerAfterCommit(endTimeRef.current)
+                }} />
                 <Clock3 size={18} />
               </label>
               <label className="field time-field">
                 <span>Ende *</span>
-                <input className="input" type="time" required step={settings.minuteStep * 60} value={draft.endTime} onChange={(event) => update('endTime', event.target.value)} />
+                <input ref={endTimeRef} className="input" type="time" required step={settings.minuteStep * 60} value={draft.endTime} onChange={(event) => update('endTime', event.target.value)} />
                 <Clock3 size={18} />
               </label>
             </div>
-            {draft.endTime <= draft.startTime && draft.endTime !== draft.startTime && (
+            {!initialBlock && <small className="time-suggestion">Vorauswahl: {suggestion.startTime}–{suggestion.endTime} · {suggestion.source === 'history' ? `aus ${suggestion.sampleCount} bisherigen Einträgen dieses Wochentags` : suggestion.source === 'weekday-default' ? 'Wochentag-Vorschlag' : 'deine Standardzeit'}</small>}
+            {draft.date && draft.endTime <= draft.startTime && draft.endTime !== draft.startTime && (
               <div className="notice" style={{ marginTop: 13 }}><CalendarDays size={17} /><span>Das Ende liegt am Folgetag. Der gesamte Block wird dem {new Intl.DateTimeFormat('de-DE', { dateStyle: 'medium' }).format(new Date(`${draft.date}T12:00:00`))} zugeordnet.</span></div>
             )}
           </div>

@@ -91,7 +91,7 @@ export function HomePage({
     <div className="page">
       <PageHeader
         eyebrow={formatMonthLong(month)}
-        title="Deine Fahrschulzeit im Blick"
+        title="Dein FahrschulKalender im Blick"
         description="Arbeitsblöcke, Ausbildungsstunden und Verdienst – lokal gespeichert und auch offline verfügbar."
         actions={(
           <>

@@ -120,6 +120,7 @@ export function downloadTextFile(
   document.body.append(anchor)
   anchor.click()
   anchor.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 0)
+  // Mobile Browser benötigen Zeit, um den Download an das System zu übergeben.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
   return true
 }

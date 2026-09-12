@@ -13,13 +13,14 @@ import {
   RefreshCw,
   Trash2,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type { AppSettings, AppWorkBlock, WorkCategory } from '../app/app-types'
 import { CategoryIcon } from '../components/CategoryIcon'
 import { PageHeader } from '../components/PageHeader'
 import { aggregateMonth, calculateWorkBlock } from '../domain'
 import { calendarCells, currentMonthKey, formatDateLong, formatMonthLong, shiftMonth, todayIso, WEEKDAY_LABELS } from '../lib/date'
 import { formatClockRange, formatDuration, formatMoneyCents } from '../lib/format'
+import { detectCalendarSwipe } from '../lib/calendarSwipe'
 import type { CalendarSyncStatus } from '../services/calendarSync'
 
 interface CalendarPageProps {
@@ -28,6 +29,7 @@ interface CalendarPageProps {
   readonly settings: AppSettings
   readonly initialDate?: string
   syncStatusFor(block: AppWorkBlock): CalendarSyncStatus
+  onSelectedDateChange(date: string): void
   onNew(date?: string): void
   onEdit(block: AppWorkBlock): void
   onDelete(block: AppWorkBlock): void
@@ -48,6 +50,7 @@ export function CalendarPage({
   settings,
   initialDate,
   syncStatusFor,
+  onSelectedDateChange,
   onNew,
   onEdit,
   onDelete,
@@ -56,12 +59,16 @@ export function CalendarPage({
   const initialMonth = currentMonthKey()
   const [month, setMonth] = useState(initialDate?.slice(0, 7) ?? initialMonth)
   const [selectedDate, setSelectedDate] = useState(initialDate ?? todayIso())
+  const pointerStart = useRef<{ x: number; y: number; pointerId: number } | undefined>(undefined)
+  const suppressNextClick = useRef(false)
 
   useEffect(() => {
     if (!initialDate) return
     setSelectedDate(initialDate)
     setMonth(initialDate.slice(0, 7))
   }, [initialDate])
+
+  useEffect(() => onSelectedDateChange(selectedDate), [onSelectedDateChange, selectedDate])
 
   const summary = useMemo(() => aggregateMonth(blocks, settings.pay, month), [blocks, month, settings.pay])
   const cells = useMemo(() => calendarCells(month), [month])
@@ -78,6 +85,33 @@ export function CalendarPage({
   }
 
   const categoryFor = (id?: string) => categories.find((category) => category.id === id)
+
+  const startSwipe = (event: ReactPointerEvent<HTMLElement>) => {
+    if (!event.isPrimary || event.button !== 0) return
+    pointerStart.current = { x: event.clientX, y: event.clientY, pointerId: event.pointerId }
+    suppressNextClick.current = false
+  }
+
+  const moveSwipe = (event: ReactPointerEvent<HTMLElement>) => {
+    const start = pointerStart.current
+    if (!start || start.pointerId !== event.pointerId) return
+    // Erst eine wirkliche Wischgeste übernehmen: sofortiges Capture würde
+    // normale Klicks von den Tagesbuttons auf die Kalenderfläche umleiten.
+    if (detectCalendarSwipe(start, { x: event.clientX, y: event.clientY })) {
+      try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* Optional in älteren WebViews. */ }
+    }
+  }
+
+  const finishSwipe = (event: ReactPointerEvent<HTMLElement>) => {
+    const start = pointerStart.current
+    pointerStart.current = undefined
+    if (!start || start.pointerId !== event.pointerId) return
+    const direction = detectCalendarSwipe(start, { x: event.clientX, y: event.clientY })
+    if (!direction) return
+    suppressNextClick.current = true
+    event.preventDefault()
+    selectMonth(shiftMonth(month, direction === 'next' ? 1 : -1))
+  }
 
   return (
     <div className="page">
@@ -98,13 +132,30 @@ export function CalendarPage({
           <div className="month-strip__label"><h2>{formatMonthLong(month)}</h2></div>
           <button className="icon-button" onClick={() => selectMonth(shiftMonth(month, 1))} aria-label="Nächster Monat"><ChevronRight size={20} /></button>
         </div>
-        {month !== initialMonth && (
+        {selectedDate !== todayIso() && (
           <button className="text-button" onClick={() => { setMonth(initialMonth); setSelectedDate(todayIso()) }}>Heute</button>
         )}
+        <div className="calendar-month-earnings">
+          <span>Erwarteter Verdienst</span>
+          <strong>{Number.isFinite(settings.pay.standardRate) ? formatMoneyCents(summary.earningsCents, settings.currency) : 'Nicht konfiguriert'}</strong>
+        </div>
       </div>
 
       <div className="calendar-layout">
-        <section className="card calendar-card" aria-label={`Kalender ${formatMonthLong(month)}`}>
+        <section
+          className="card calendar-card"
+          aria-label={`Kalender ${formatMonthLong(month)}`}
+          onPointerDown={startSwipe}
+          onPointerMove={moveSwipe}
+          onPointerUp={finishSwipe}
+          onPointerCancel={() => { pointerStart.current = undefined }}
+          onClickCapture={(event) => {
+            if (!suppressNextClick.current) return
+            suppressNextClick.current = false
+            event.preventDefault()
+            event.stopPropagation()
+          }}
+        >
           <div className="calendar-weekdays" aria-hidden="true">
             {WEEKDAY_LABELS.map((label) => <span key={label}>{label}</span>)}
           </div>
@@ -122,9 +173,13 @@ export function CalendarPage({
                 <button
                   key={cell.date}
                   className={className}
+                  aria-pressed={selectedDate === cell.date}
+                  aria-current={cell.isToday ? 'date' : undefined}
                   onClick={() => {
                     setSelectedDate(cell.date)
+                    onSelectedDateChange(cell.date)
                     if (!cell.inMonth) setMonth(cell.date.slice(0, 7))
+                    if (dayBlocks.length === 0) onNew(cell.date)
                   }}
                   aria-label={`${cell.date}${day ? `, ${formatDuration(day.workMinutes)}, ${formatMoneyCents(day.earningsCents)}` : ', keine Arbeitszeit'}`}
                 >

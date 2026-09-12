@@ -225,7 +225,7 @@ export function createIcsCalendar<T extends ExportWorkBlock>(
     throw new TypeError('ICS-Export enthält doppelte Arbeitsblock-IDs und damit doppelte UIDs.')
   }
   const stamp = formatIcsUtc(options.now ?? new Date())
-  const calendarName = options.calendarName?.trim() || 'Fahrschulzeit'
+  const calendarName = options.calendarName?.trim() || 'FahrschulKalender'
   const calendarColor = colorHex(options.color)
   const sorted = [...workBlocks].sort((left, right) =>
     left.date.localeCompare(right.date) ||
@@ -235,7 +235,7 @@ export function createIcsCalendar<T extends ExportWorkBlock>(
   const logicalLines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    `PRODID:${escapeIcsText(options.productId ?? '-//Fahrschulzeit//Arbeitszeit v0.1.0//DE')}`,
+    `PRODID:${escapeIcsText(options.productId ?? '-//FahrschulKalender//Arbeitszeit v0.1.1//DE')}`,
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     `X-WR-CALNAME:${escapeIcsText(calendarName)}`,
@@ -296,7 +296,7 @@ export function createIcsFilename(scope: string): string {
     .replace(/[^\p{Letter}\p{Number}-]+/gu, '-')
     .replace(/^-+|-+$/gu, '')
     .toLocaleLowerCase('de-DE') || 'export'
-  return `fahrschulzeit-${safeScope}.ics`
+  return `fahrschulkalender-${safeScope}.ics`
 }
 
 // Explicit aliases make the block/day/month intent discoverable to callers.

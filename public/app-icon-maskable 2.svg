@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Fahrschulzeit maskierbares App-Icon</title>
+  <rect width="512" height="512" fill="#b4232d"/>
+  <rect x="82" y="166" width="348" height="180" rx="30" fill="#fffdf9" stroke="#fffdf9" stroke-width="12"/>
+  <path d="M118 148h276M132 364h248" stroke="#fffdf9" stroke-width="18" stroke-linecap="round"/>
+  <text x="256" y="272" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="41" font-weight="800" letter-spacing="1" fill="#b4232d">FAHRSCHULE</text>
+</svg>

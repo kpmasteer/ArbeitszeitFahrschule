@@ -4,6 +4,7 @@ import {
   ChevronRight,
   Download,
   Printer,
+  WalletCards,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
@@ -41,6 +42,7 @@ export interface InsightsPageProps {
   readonly settings: AppSettings
   readonly onExportCsv: (scope: 'month' | 'year', key: string) => void
   readonly onPrintMonth: (month: string) => void
+  readonly onOpenPayments: () => void
 }
 
 interface MiniStatProps {
@@ -194,6 +196,7 @@ export function InsightsPage({
   settings,
   onExportCsv,
   onPrintMonth,
+  onOpenPayments,
 }: InsightsPageProps) {
   const [mode, setMode] = useState<InsightsMode>('month')
   const [selectedMonth, setSelectedMonth] = useState(currentMonthKey)
@@ -267,6 +270,9 @@ export function InsightsPage({
         description="Monats- und Jahreswerte werden direkt aus deinen lokal gespeicherten Arbeitsblöcken berechnet."
         actions={(
           <>
+            <button className="button button--secondary" type="button" onClick={onOpenPayments}>
+              <WalletCards size={17} /> Zahlungen prüfen
+            </button>
             <button
               className="button button--secondary"
               type="button"
@@ -446,4 +452,3 @@ export function InsightsPage({
     </div>
   )
 }
-

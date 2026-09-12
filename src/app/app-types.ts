@@ -59,6 +59,8 @@ export interface AppSettings {
   readonly compactCalendar: boolean
   readonly calendar: CalendarSyncSettings
   readonly showSampleData: boolean
+  /** Fortlaufender Saldo vor dem ersten in der App ausgewerteten Monat. Negativ = offene Forderung. */
+  readonly payControlStartingBalanceCents: number
 }
 
 export type CalendarSyncState = 'pending' | 'synced' | 'changed' | 'missing' | 'error'
@@ -93,4 +95,24 @@ export interface WorkBlockDraft {
   readonly notes?: string
   readonly location?: string
   readonly calendarText?: string
+}
+
+export interface PaymentRecord {
+  readonly id: string
+  /** Buchungsdatum des tatsächlichen Zahlungseingangs. */
+  readonly paymentDate: string
+  /** Monat, für dessen Lohnabrechnung die Zahlung berücksichtigt wird. */
+  readonly salaryMonth: string
+  readonly amountCents: number
+  readonly note?: string
+  readonly createdAt: string
+  readonly updatedAt: string
+}
+
+export interface PaymentDraft {
+  readonly id?: string
+  readonly paymentDate: string
+  readonly salaryMonth: string
+  readonly amountCents: number
+  readonly note?: string
 }

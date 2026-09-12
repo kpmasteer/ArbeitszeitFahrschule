@@ -91,8 +91,8 @@ describe('local repository and backup', () => {
 describe('exports and calendar state', () => {
   it('renders documented German placeholders', () => {
     const context = createCalendarTemplateContext(block, metrics)
-    expect(renderCalendarTemplate('{tätigkeit} · {arbeitszeit} · {verdienst}', context)).toBe(
-      'Nachtfahrt · 2:45 Std. · 82,50 €',
+    expect(renderCalendarTemplate('{tätigkeit} · {arbeitszeit} · {dauer} · {verdienst}', context)).toBe(
+      'Nachtfahrt · 21:30–00:15 · 2:45 Std. · 82,50 €',
     )
   })
 

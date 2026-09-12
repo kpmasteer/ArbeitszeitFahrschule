@@ -35,6 +35,7 @@ export interface SettingsPageProps {
   readonly onAddCategory: (name: string) => void | Promise<void>
   readonly onExportBackup: () => void
   readonly onImportBackup: (file: File) => void
+  readonly onImportCsv: (files: readonly File[]) => void
   readonly onExportCsv: () => void
   readonly onResetData: () => void
   readonly onCalendarDiagnostic: () => void
@@ -171,6 +172,7 @@ export function SettingsPage({
   onAddCategory,
   onExportBackup,
   onImportBackup,
+  onImportCsv,
   onExportCsv,
   onResetData,
   onCalendarDiagnostic,
@@ -179,6 +181,7 @@ export function SettingsPage({
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('pay')
   const [newCategoryName, setNewCategoryName] = useState('')
   const importInputRef = useRef<HTMLInputElement>(null)
+  const csvImportInputRef = useRef<HTMLInputElement>(null)
   const sortedCategories = useMemo(
     () => [...categories].sort((left, right) => left.sortOrder - right.sortOrder),
     [categories],
@@ -241,10 +244,15 @@ export function SettingsPage({
     if (importInputRef.current) importInputRef.current.value = ''
   }
 
+  function handleCsvImportFiles(files: FileList | null) {
+    if (files?.length) onImportCsv(Array.from(files))
+    if (csvImportInputRef.current) csvImportInputRef.current.value = ''
+  }
+
   return (
     <div className="page">
       <PageHeader
-        eyebrow="Fahrschulzeit konfigurieren"
+        eyebrow="FahrschulKalender konfigurieren"
         title="Einstellungen"
         description="Passe Vergütung, Zeiterfassung, Kalenderübertragung und lokale Datensicherung an deinen Arbeitsalltag an."
         actions={<span className="version-pill">Version {APP_VERSION}</span>}
@@ -322,7 +330,26 @@ export function SettingsPage({
                 <select className="select" value={settings.currency} disabled aria-label="Währung">
                   <option value="EUR">Euro (€)</option>
                 </select>
-                <small>Fahrschulzeit v0.1.0 verwendet Euro als feste Währung.</small>
+                <small>FahrschulKalender v{APP_VERSION} verwendet Euro als feste Währung.</small>
+              </label>
+
+              <label className="field span-all">
+                <span>Startsaldo der Lohnkontrolle</span>
+                <div className="input-with-suffix">
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={settings.payControlStartingBalanceCents / 100}
+                    onChange={(event) => {
+                      const euro = Number(event.target.value)
+                      if (Number.isFinite(euro)) updateSetting('payControlStartingBalanceCents', Math.round(euro * 100))
+                    }}
+                  />
+                  <span>€</span>
+                </div>
+                <small>Standard 0 €. Negative Werte stehen für bereits offene Forderungen, positive Werte für vorhandenes Guthaben.</small>
               </label>
             </div>
           </section>
@@ -523,10 +550,10 @@ export function SettingsPage({
                   className="textarea"
                   value={settings.calendar.descriptionTemplate}
                   onChange={(event) => updateCalendar({ descriptionTemplate: event.target.value })}
-                  placeholder="{arbeitszeit} · {ausbstunden}"
+                  placeholder="{dauer} · {ausbstunden}"
                 />
                 <small>
-                  Platzhalter: {'{tätigkeit}'}, {'{arbeitszeit}'}, {'{ausbstunden}'}, {'{verdienst}'}, {'{fahrzeugklasse}'}, {'{bemerkung}'}, {'{start}'}, {'{ende}'}
+                  Platzhalter: {'{tätigkeit}'}, {'{arbeitszeit}'} (Uhrzeit von–bis), {'{dauer}'}, {'{ausbstunden}'}, {'{verdienst}'}, {'{fahrzeugklasse}'}, {'{bemerkung}'}, {'{start}'}, {'{ende}'}
                 </small>
               </label>
 
@@ -692,20 +719,26 @@ export function SettingsPage({
               <DataAction
                 icon={Download}
                 title="Sicherung exportieren"
-                description="Alle Arbeitszeiten und Einstellungen als Backup speichern."
+                description="Vollständige JSON-Sicherung: Arbeitszeiten, Zahlungen mit Lohnmonat, Startsaldo, Kategorien und Einstellungen. Für Gerätewechsel empfohlen."
                 onClick={onExportBackup}
               />
               <DataAction
                 icon={Upload}
                 title="Sicherung importieren"
-                description="Eine zuvor exportierte Sicherungsdatei wiederherstellen."
+                description="JSON-Sicherung oder die Android-Textdatei (.json.txt) wiederherstellen. Ersetzt nach Bestätigung die aktuellen lokalen Daten."
                 onClick={() => importInputRef.current?.click()}
               />
               <DataAction
                 icon={FileSpreadsheet}
                 title="CSV exportieren"
-                description="Arbeitsblöcke zur weiteren Auswertung als Tabelle sichern."
+                description="Arbeitsblöcke als Tabelle für Excel oder erneuten CSV-Import speichern. Zahlungen und Einstellungen sind nur in der JSON-Sicherung enthalten."
                 onClick={onExportCsv}
+              />
+              <DataAction
+                icon={Upload}
+                title="CSV importieren"
+                description="CSV-Dateien dieser App oder des bisherigen Arbeitszeit-Exports hinzufügen. Gleiche Datums- und Zeitbereiche werden übersprungen."
+                onClick={() => csvImportInputRef.current?.click()}
               />
               <DataAction
                 icon={Trash2}
@@ -719,9 +752,17 @@ export function SettingsPage({
             <input
               ref={importInputRef}
               type="file"
-              accept=".json,application/json"
+              accept=".json,.txt,application/json,text/plain"
               hidden
               onChange={(event) => handleImportFile(event.target.files?.[0])}
+            />
+            <input
+              ref={csvImportInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              multiple
+              hidden
+              onChange={(event) => handleCsvImportFiles(event.target.files)}
             />
 
             <div style={{ marginTop: 15 }}>
@@ -744,7 +785,7 @@ export function SettingsPage({
             <div className="about-card">
               <Logo compact />
               <div>
-                <strong>Fahrschulzeit</strong>
+                <strong>FahrschulKalender</strong>
                 <small>Local-first · offlinefähig · keine Anmeldung erforderlich</small>
               </div>
               <span className="version-pill">v{APP_VERSION}</span>
@@ -769,7 +810,7 @@ export function SettingsPage({
               <CalendarDays size={18} />
               <div>
                 <strong>Version {APP_VERSION}</strong><br />
-                Erste Arbeitsversion mit Zeiterfassung, Auswertungen, Datensicherung und vorbereiteter Kalenderanbindung.
+                CSV-Import, Zahlungskontrolle, intelligente Zeitvorschläge, funktionierende Kalender-Platzhalter und verbesserte native Navigation.
               </div>
             </div>
           </section>

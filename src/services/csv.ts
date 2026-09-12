@@ -33,6 +33,11 @@ export const WORK_BLOCK_CSV_HEADERS = [
   'Fahrschüler / Auftrag',
   'Ort',
   'Bemerkung',
+  'Kategorie-ID',
+  'Abweichender Satz',
+  'Pausendetails',
+  'Kalendertext',
+  'Eigene Tätigkeit',
 ] as const
 
 function validateMetrics(metrics: WorkBlockExportMetrics): void {
@@ -133,6 +138,11 @@ export function createWorkBlocksCsv<T extends ExportWorkBlock>(
       personOrOrder,
       block.location ?? '',
       block.notes ?? '',
+      block.categoryId ?? '',
+      block.rateOverride ?? '',
+      JSON.stringify(block.breaks),
+      block.calendarText ?? '',
+      block.activity ?? '',
     ])
   })
   const protect = options.protectSpreadsheetFormulas !== false
@@ -153,5 +163,5 @@ export function createCsvFilename(scope: string, date = new Date()): string {
     .replace(/^-+|-+$/gu, '')
     .toLocaleLowerCase('de-DE') || 'export'
   const stamp = date.toISOString().slice(0, 10)
-  return `fahrschulzeit-${safeScope}-${stamp}.csv`
+  return `fahrschulkalender-${safeScope}-${stamp}.csv`
 }

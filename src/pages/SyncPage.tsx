@@ -137,7 +137,7 @@ export function SyncPage({
         }
       })(), { activityLabel: categories.find((category) => category.id === previewBlock.categoryId)?.name, currency: settings.currency })
     : {
-        tätigkeit: 'Praktische Ausbildung', arbeitszeit: '4:30 Std.', ausbstunden: '6,00 AusbStd.', verdienst: '135,00 €',
+        tätigkeit: 'Praktische Ausbildung', arbeitszeit: '08:00–12:45', arbeitzeit: '08:00–12:45', dauer: '4:30 Std.', ausbstunden: '6,00 AusbStd.', verdienst: '135,00 €',
         fahrzeugklasse: 'B', bemerkung: '', start: '08:00', ende: '12:45',
       }
   const previewTitle = renderCalendarTemplate(settings.calendar.titleTemplate, previewContext)

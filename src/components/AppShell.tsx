@@ -5,11 +5,12 @@ import {
   Home,
   Plus,
   Settings,
+  WalletCards,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Logo } from './Logo'
 
-export type AppPage = 'home' | 'calendar' | 'capture' | 'insights' | 'sync' | 'settings'
+export type AppPage = 'home' | 'calendar' | 'capture' | 'insights' | 'payments' | 'sync' | 'settings'
 
 interface AppShellProps {
   readonly page: AppPage
@@ -37,7 +38,7 @@ export function AppShell({ page, onNavigate, children, syncCount }: AppShellProp
           {primaryNav.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
-              className={`sidebar__item ${page === id ? 'is-active' : ''}`}
+              className={`sidebar__item ${page === id || (id === 'insights' && page === 'payments') ? 'is-active' : ''}`}
               onClick={() => onNavigate(id)}
               aria-current={page === id ? 'page' : undefined}
             >
@@ -50,6 +51,14 @@ export function AppShell({ page, onNavigate, children, syncCount }: AppShellProp
           ))}
         </nav>
         <div className="sidebar__footer">
+          <button
+            className={`sidebar__item ${page === 'payments' ? 'is-active' : ''}`}
+            onClick={() => onNavigate('payments')}
+            aria-current={page === 'payments' ? 'page' : undefined}
+          >
+            <WalletCards size={20} strokeWidth={1.8} />
+            <span>Zahlungen</span>
+          </button>
           <button
             className={`sidebar__item ${page === 'settings' ? 'is-active' : ''}`}
             onClick={() => onNavigate('settings')}
@@ -84,7 +93,7 @@ export function AppShell({ page, onNavigate, children, syncCount }: AppShellProp
           return (
             <button
               key={id}
-              className={`bottom-nav__item ${page === id ? 'is-active' : ''} ${isCapture ? 'bottom-nav__item--capture' : ''}`}
+              className={`bottom-nav__item ${page === id || (id === 'insights' && page === 'payments') ? 'is-active' : ''} ${isCapture ? 'bottom-nav__item--capture' : ''}`}
               onClick={() => onNavigate(id)}
               aria-current={page === id ? 'page' : undefined}
               aria-label={label}

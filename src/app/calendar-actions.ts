@@ -70,7 +70,7 @@ export function downloadIcsExport(
   scope: string,
 ): boolean {
   const content = createIcsCalendar(blocks, (block) => metricsFor(block, settings), {
-    calendarName: settings.calendar.targetCalendarName || 'Fahrschulzeit',
+    calendarName: settings.calendar.targetCalendarName || 'FahrschulKalender',
     titleTemplate: settings.calendar.titleTemplate,
     descriptionTemplate: settings.calendar.includeEarnings
       ? `${settings.calendar.descriptionTemplate}\n{verdienst}`
@@ -114,7 +114,7 @@ export function nativeEventDraft(
     renderedDescription,
     settings.calendar.includeEarnings ? context.verdienst : '',
     block.notes,
-    `Fahrschulzeit-ID: ${block.id}`,
+    `FahrschulKalender-ID: ${block.id}`,
   ].filter(Boolean)
 
   return {

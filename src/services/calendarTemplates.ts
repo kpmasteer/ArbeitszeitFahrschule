@@ -4,6 +4,8 @@ import { formatClockMinutes } from './serviceUtils'
 export const CALENDAR_TEMPLATE_PLACEHOLDERS = [
   'tätigkeit',
   'arbeitszeit',
+  'arbeitzeit',
+  'dauer',
   'ausbstunden',
   'verdienst',
   'fahrzeugklasse',
@@ -36,7 +38,7 @@ export interface CalendarContextOptions<T extends ExportWorkBlock> {
 
 export const DEFAULT_CALENDAR_TITLE_TEMPLATE = 'Fahrschule – {tätigkeit}'
 export const DEFAULT_CALENDAR_DESCRIPTION_TEMPLATE =
-  '{arbeitszeit} · {ausbstunden} · {verdienst}'
+  '{dauer} · {ausbstunden} · {verdienst}'
 
 const PLACEHOLDER_PATTERN = /\{([^{}]+)\}/gu
 
@@ -113,7 +115,9 @@ export function createCalendarTemplateContext<T extends ExportWorkBlock>(
   })
   return {
     tätigkeit: resolveActivityLabel(block, options.activityLabel),
-    arbeitszeit: `${formatClockMinutes(metrics.workMinutes)} Std.`,
+    arbeitszeit: `${block.startTime}–${block.endTime}`,
+    arbeitzeit: `${block.startTime}–${block.endTime}`,
+    dauer: `${formatClockMinutes(metrics.workMinutes)} Std.`,
     ausbstunden: `${decimal.format(metrics.trainingHours)} AusbStd.`,
     verdienst: money.format(metrics.earningsCents / 100),
     fahrzeugklasse: block.vehicleClass?.trim() ?? '',

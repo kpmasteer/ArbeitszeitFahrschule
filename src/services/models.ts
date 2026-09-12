@@ -64,8 +64,20 @@ export interface SettingRecord extends EntityRecord {
   value: unknown
 }
 
+export interface BackupPayment extends EntityRecord {
+  paymentDate: string
+  /** Optional only for reading backups created before salary-month assignment. */
+  salaryMonth?: string
+  amountCents: number
+  note?: string
+  createdAt: string
+  updatedAt: string
+}
+
 /** Minimal shape accepted by calendar and CSV exports. */
 export interface ExportWorkBlock extends EntityRecord {
+  breaks?: readonly BackupBreakRecord[]
+  rateOverride?: number
   date: string
   startTime: string
   endTime: string
@@ -105,6 +117,7 @@ export const APP_STORE_NAMES = {
   categories: 'categories',
   settings: 'settings',
   calendarSync: 'calendarSync',
+  payments: 'payments',
 } as const
 
 export type AppStoreName = (typeof APP_STORE_NAMES)[keyof typeof APP_STORE_NAMES]

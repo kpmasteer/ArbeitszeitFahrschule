@@ -2,6 +2,7 @@ import type { CalendarSyncRecord } from './calendarSync'
 import {
   APP_STORE_NAMES,
   type BackupCategory,
+  type BackupPayment,
   type BackupWorkBlock,
   type EntityRecord,
   type SettingRecord,
@@ -17,7 +18,7 @@ import {
 } from './serviceUtils'
 
 export const BACKUP_FORMAT = 'fahrschulzeit-backup' as const
-export const BACKUP_SCHEMA_VERSION = 1 as const
+export const BACKUP_SCHEMA_VERSION = 2 as const
 
 export interface BackupDataV1 {
   readonly workBlocks: readonly BackupWorkBlock[]
@@ -26,12 +27,24 @@ export interface BackupDataV1 {
   readonly calendarSync: readonly CalendarSyncRecord[]
 }
 
+export interface BackupDataV2 extends BackupDataV1 {
+  readonly payments: readonly BackupPayment[]
+}
+
 export interface BackupEnvelopeV1 {
+  format: typeof BACKUP_FORMAT
+  schemaVersion: 1
+  appVersion: string
+  exportedAt: string
+  data: BackupDataV1
+}
+
+export interface BackupEnvelopeV2 {
   format: typeof BACKUP_FORMAT
   schemaVersion: typeof BACKUP_SCHEMA_VERSION
   appVersion: string
   exportedAt: string
-  data: BackupDataV1
+  data: BackupDataV2
 }
 
 export interface BackupValidationIssue {
@@ -48,7 +61,7 @@ export interface BackupValidationIssue {
 }
 
 export type BackupValidationResult =
-  | { valid: true; backup: BackupEnvelopeV1; issues: [] }
+  | { valid: true; backup: BackupEnvelopeV2; issues: [] }
   | { valid: false; backup?: undefined; issues: BackupValidationIssue[] }
 
 export interface BackupParseOptions {
@@ -73,6 +86,7 @@ export interface ImportBackupResult {
     categories: number
     settings: number
     calendarSync: number
+    payments: number
   }
   exportedAt: string
   sourceAppVersion: string
@@ -266,6 +280,35 @@ function validateSetting(
   return true
 }
 
+function validatePayment(
+  value: unknown,
+  index: number,
+  issues: BackupValidationIssue[],
+): value is BackupPayment {
+  const path = `data.payments[${index}]`
+  if (!validateJsonRecord(value, path, issues)) return false
+  requireString(value, 'id', path, issues)
+  if (!isIsoDate(value.paymentDate)) {
+    issue(issues, `${path}.paymentDate`, 'invalid_value', 'Zahlungsdatum im Format YYYY-MM-DD erwartet.')
+  }
+  if (value.salaryMonth !== undefined && (
+    typeof value.salaryMonth !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value.salaryMonth)
+  )) {
+    issue(issues, `${path}.salaryMonth`, 'invalid_value', 'Lohnmonat im Format YYYY-MM erwartet.')
+  }
+  if (!Number.isInteger(value.amountCents) || Number(value.amountCents) <= 0) {
+    issue(issues, `${path}.amountCents`, 'invalid_value', 'Positive ganze Centzahl erwartet.')
+  }
+  validateOptionalString(value, 'note', path, issues)
+  if (!validTimestamp(value.createdAt)) {
+    issue(issues, `${path}.createdAt`, 'invalid_value', 'Gültiger Erstellungszeitpunkt erwartet.')
+  }
+  if (!validTimestamp(value.updatedAt)) {
+    issue(issues, `${path}.updatedAt`, 'invalid_value', 'Gültiger Änderungszeitpunkt erwartet.')
+  }
+  return true
+}
+
 function validateCalendarSync(
   value: unknown,
   index: number,
@@ -344,12 +387,12 @@ export function validateBackup(
   if (input.format !== BACKUP_FORMAT) {
     issue(issues, 'format', 'invalid_value', `Format „${BACKUP_FORMAT}“ erwartet.`)
   }
-  if (input.schemaVersion !== BACKUP_SCHEMA_VERSION) {
+  if (input.schemaVersion !== 1 && input.schemaVersion !== BACKUP_SCHEMA_VERSION) {
     issue(
       issues,
       'schemaVersion',
       'unsupported_version',
-      `Backup-Schema ${String(input.schemaVersion)} wird nicht unterstützt. Erwartet wird Version ${BACKUP_SCHEMA_VERSION}.`,
+      `Backup-Schema ${String(input.schemaVersion)} wird nicht unterstützt. Unterstützt werden Version 1 und ${BACKUP_SCHEMA_VERSION}.`,
     )
   }
   requireString(input, 'appVersion', '$', issues)
@@ -376,7 +419,12 @@ export function validateBackup(
   const categories = data.categories as unknown[]
   const settings = data.settings as unknown[]
   const calendarSync = data.calendarSync as unknown[]
-  const recordCount = workBlocks.length + categories.length + settings.length + calendarSync.length
+  const payments = input.schemaVersion === 1 ? [] : Array.isArray(data.payments) ? data.payments as unknown[] : undefined
+  if (!payments) {
+    issue(issues, 'data.payments', 'invalid_type', 'Liste erwartet.')
+    return { valid: false, issues }
+  }
+  const recordCount = workBlocks.length + categories.length + settings.length + calendarSync.length + payments.length
   if (recordCount > (options.maxRecords ?? DEFAULT_MAX_RECORDS)) {
     issue(issues, 'data', 'too_large', 'Backup enthält zu viele Datensätze.')
     return { valid: false, issues }
@@ -386,10 +434,20 @@ export function validateBackup(
   categories.forEach((value, index) => validateCategory(value, index, issues))
   settings.forEach((value, index) => validateSetting(value, index, issues))
   calendarSync.forEach((value, index) => validateCalendarSync(value, index, issues))
+  payments.forEach((value, index) => validatePayment(value, index, issues))
   collections.forEach((key) => validateUniqueIds(data[key] as unknown[], `data.${key}`, issues))
+  validateUniqueIds(payments, 'data.payments', issues)
 
   if (issues.length > 0) return { valid: false, issues }
-  return { valid: true, backup: cloneValue(input as unknown as BackupEnvelopeV1), issues: [] }
+  return {
+    valid: true,
+    backup: cloneValue({
+      ...input,
+      schemaVersion: BACKUP_SCHEMA_VERSION,
+      data: { ...data, payments },
+    } as unknown as BackupEnvelopeV2),
+    issues: [],
+  }
 }
 
 export function parseBackup(
@@ -426,21 +484,21 @@ function normalizeTimestamp(value: Date | string | undefined): string {
 }
 
 export function createBackupEnvelope(
-  data: BackupDataV1,
+  data: BackupDataV1 & { readonly payments?: readonly BackupPayment[] },
   options: CreateBackupOptions = {},
-): BackupEnvelopeV1 {
+): BackupEnvelopeV2 {
   // JSON round-trip intentionally removes undefined optional UI fields while
   // retaining every additional JSON-compatible property.
-  let normalizedData: BackupDataV1
+  let normalizedData: BackupDataV2
   try {
-    normalizedData = JSON.parse(JSON.stringify(data)) as BackupDataV1
+    normalizedData = JSON.parse(JSON.stringify({ ...data, payments: data.payments ?? [] })) as BackupDataV2
   } catch (error) {
     throw new TypeError(`Backup-Daten sind nicht serialisierbar: ${String(error)}`)
   }
-  const backup: BackupEnvelopeV1 = {
+  const backup: BackupEnvelopeV2 = {
     format: BACKUP_FORMAT,
     schemaVersion: BACKUP_SCHEMA_VERSION,
-    appVersion: options.appVersion ?? '0.1.0',
+    appVersion: options.appVersion ?? '0.1.1',
     exportedAt: normalizeTimestamp(options.exportedAt),
     data: normalizedData,
   }
@@ -450,7 +508,7 @@ export function createBackupEnvelope(
 }
 
 export function serializeBackup(
-  data: BackupDataV1,
+  data: BackupDataV2,
   options: CreateBackupOptions = {},
 ): string {
   const backup = createBackupEnvelope(data, options)
@@ -466,6 +524,7 @@ export async function exportRepositoryBackup(
     APP_STORE_NAMES.categories,
     APP_STORE_NAMES.settings,
     APP_STORE_NAMES.calendarSync,
+    APP_STORE_NAMES.payments,
   ])
   return serializeBackup(
     {
@@ -473,6 +532,7 @@ export async function exportRepositoryBackup(
       categories: stores[APP_STORE_NAMES.categories] as BackupCategory[],
       settings: stores[APP_STORE_NAMES.settings] as SettingRecord[],
       calendarSync: stores[APP_STORE_NAMES.calendarSync] as CalendarSyncRecord[],
+      payments: stores[APP_STORE_NAMES.payments] as BackupPayment[],
     },
     options,
   )
@@ -502,12 +562,14 @@ export async function importRepositoryBackup(
       APP_STORE_NAMES.categories,
       APP_STORE_NAMES.settings,
       APP_STORE_NAMES.calendarSync,
+      APP_STORE_NAMES.payments,
     ])
     data = {
       workBlocks: mergeById(current[APP_STORE_NAMES.workBlocks] as BackupWorkBlock[], data.workBlocks),
       categories: mergeById(current[APP_STORE_NAMES.categories] as BackupCategory[], data.categories),
       settings: mergeById(current[APP_STORE_NAMES.settings] as SettingRecord[], data.settings),
       calendarSync: mergeById(current[APP_STORE_NAMES.calendarSync] as CalendarSyncRecord[], data.calendarSync),
+      payments: mergeById(current[APP_STORE_NAMES.payments] as BackupPayment[], data.payments),
     }
   }
   await repository.replaceStores({
@@ -515,6 +577,7 @@ export async function importRepositoryBackup(
     [APP_STORE_NAMES.categories]: data.categories,
     [APP_STORE_NAMES.settings]: data.settings,
     [APP_STORE_NAMES.calendarSync]: data.calendarSync,
+    [APP_STORE_NAMES.payments]: data.payments,
   })
   return {
     mode,
@@ -523,6 +586,7 @@ export async function importRepositoryBackup(
       categories: data.categories.length,
       settings: data.settings.length,
       calendarSync: data.calendarSync.length,
+      payments: data.payments.length,
     },
     exportedAt: parsed.backup.exportedAt,
     sourceAppVersion: parsed.backup.appVersion,

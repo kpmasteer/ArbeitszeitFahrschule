@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect x="84" y="166" width="344" height="180" rx="30" fill="#fffdf9" stroke="#b4232d" stroke-width="18"/>
+  <path d="M118 148h276M132 364h248" stroke="#b4232d" stroke-width="18" stroke-linecap="round"/>
+  <text x="256" y="272" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="41" font-weight="800" letter-spacing="1" fill="#b4232d">FAHRSCHULE</text>
+</svg>
